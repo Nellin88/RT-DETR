@@ -22,3 +22,13 @@ GPU do not release memory
 Save all logs
 - Appending `&> train.log 2>&1 &` or `&> train.log 2>&1`
 
+
+Merge two flower datasets (COCO)
+- All labels are remapped into one class by default: `flower`.
+- `python tools/merge_coco_datasets.py --output-root dataset/flower_detection_merged`
+- `python tools/merge_coco_datasets.py --output-root dataset/flower_detection_merged --valid-to test`
+- `python tools/merge_coco_datasets.py --output-root dataset/flower_detection_merged --test-to-val-ratio 0.5`
+- `python tools/merge_coco_datasets.py --output-root dataset/flower_detection_merged --dry-run`
+- `python tools/merge_coco_datasets.py --output-root dataset/flower_detection_merged --overwrite --mode hardlink`
+- `python tools/merge_coco_datasets.py --output-root dataset/flower_detection_merged --class-name flower`
+

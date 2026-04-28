@@ -1,0 +1,64 @@
+__include__: [
+  '../dataset/flower_detection.yml',
+  '../runtime.yml',
+  './include/dataloader.yml',
+  './include/rtdetr_r50vd.yml',
+]
+
+
+output_dir: ./output/rtdetr_r18vd_flower
+
+# --- 模型结构 (R18) ---
+PResNet:
+  depth: 18
+  freeze_at: -1
+  freeze_norm: False
+  pretrained: False          # 预训练backbone权重由 --tuning 统一加载，此处关闭
+
+HybridEncoder:
+  in_channels: [128, 256, 512]
+  hidden_dim: 256
+  expansion: 0.5
+
+RTDETRTransformer:
+  eval_idx: -1
+  num_decoder_layers: 3
+  num_denoising: 100
+  num_classes: 1             # 覆盖 include 里的默认值
+
+# --- 类别数 ---
+num_classes: 1
+
+# --- 训练超参数 ---
+epoches: 50
+clip_max_norm: 0.1
+find_unused_parameters: True
+
+use_ema: True
+ema:
+  type: ModelEMA
+  decay: 0.9999
+  warmups: 2000
+
+optimizer:
+  type: AdamW
+  params:
+    -
+      params: '^(?=.*backbone)(?=.*norm).*$'
+      lr: 0.000005
+      weight_decay: 0.
+    -
+      params: '^(?=.*backbone)(?!.*norm).*$'
+      lr: 0.000005
+    -
+      params: '^(?=.*(?:encoder|decoder))(?=.*(?:norm|bias)).*$'
+      weight_decay: 0.
+
+  lr: 0.0001
+  betas: [0.9, 0.999]
+  weight_decay: 0.0001
+
+lr_scheduler:
+  type: MultiStepLR
+  milestones: [40]
+  gamma: 0.1

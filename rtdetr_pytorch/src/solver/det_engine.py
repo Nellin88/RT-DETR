@@ -12,7 +12,8 @@ import pathlib
 from typing import Iterable
 
 import torch
-import torch.amp 
+import torch.amp
+from tqdm import tqdm
 
 from src.data import CocoEvaluator
 from src.misc import (MetricLogger, SmoothedValue, reduce_dict)
@@ -27,25 +28,24 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
     metric_logger.add_meter('lr', SmoothedValue(window_size=1, fmt='{value:.6f}'))
     # metric_logger.add_meter('class_error', SmoothedValue(window_size=1, fmt='{value:.2f}'))
     header = 'Epoch: [{}]'.format(epoch)
-    print_freq = kwargs.get('print_freq', 10)
-    
     ema = kwargs.get('ema', None)
     scaler = kwargs.get('scaler', None)
 
-    for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
+    pbar = tqdm(data_loader, desc=header, dynamic_ncols=True)
+    for samples, targets in pbar:
         samples = samples.to(device)
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 
         if scaler is not None:
             with torch.autocast(device_type=str(device), cache_enabled=True):
                 outputs = model(samples, targets)
-            
+
             with torch.autocast(device_type=str(device), enabled=False):
                 loss_dict = criterion(outputs, targets)
 
             loss = sum(loss_dict.values())
             scaler.scale(loss).backward()
-            
+
             if max_norm > 0:
                 scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
@@ -57,17 +57,16 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         else:
             outputs = model(samples, targets)
             loss_dict = criterion(outputs, targets)
-            
+
             loss = sum(loss_dict.values())
             optimizer.zero_grad()
             loss.backward()
-            
+
             if max_norm > 0:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
 
             optimizer.step()
-        
-        # ema 
+
         if ema is not None:
             ema.update(model)
 
@@ -82,7 +81,11 @@ def train_one_epoch(model: torch.nn.Module, criterion: torch.nn.Module,
         metric_logger.update(loss=loss_value, **loss_dict_reduced)
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
 
-    # gather the stats from all processes
+        pbar.set_postfix({
+            'loss': f'{loss_value:.4f}',
+            'lr': f'{optimizer.param_groups[0]["lr"]:.2e}',
+        })
+
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
@@ -111,7 +114,7 @@ def evaluate(model: torch.nn.Module, criterion: torch.nn.Module, postprocessors,
     #         output_dir=os.path.join(output_dir, "panoptic_eval"),
     #     )
 
-    for samples, targets in metric_logger.log_every(data_loader, 10, header):
+    for samples, targets in tqdm(data_loader, desc=header, dynamic_ncols=True):
         samples = samples.to(device)
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 

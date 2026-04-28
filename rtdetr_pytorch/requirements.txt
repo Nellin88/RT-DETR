@@ -6,3 +6,15 @@ pycocotools
 PyYAML
 scipy
 transformers
+
+# SAHI runtime dependencies
+sahi
+opencv-python>=4.12.0.88
+shapely>=2.0.0
+tqdm>=4.48.2
+pillow>=8.2.0
+numpy
+fire
+requests
+click
+scikit-image
