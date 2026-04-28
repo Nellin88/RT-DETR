@@ -1,3 +1,94 @@
+
+## 🎯 Custom Dataset Training Workflow
+
+### 1️⃣ Prepare Your Dataset
+
+Place your custom dataset into the `rtdetr_pytorch/dataset/` directory. The expected structure is:
+
+```
+rtdetr_pytorch/dataset/YourDataset/
+├── annotations/
+│   ├── train.json
+│   ├── val.json
+│   └── test.json
+└── images/
+    ├── train/
+    ├── val/
+    └── test/
+```
+
+Your annotations must be in **COCO format** (JSON files with image and annotation records).
+
+### 2️⃣ Slice Large Images with SAHI
+
+If your images are large or contain small objects, use SAHI to automatically slice them into uniform tiles:
+
+```bash
+cd rtdetr_pytorch
+python tools/sahi_slice_dataset.py \
+    --size 640 \
+    --overlap 0.2 \
+    --min-area 0.1
+```
+
+**Parameters:**
+- `--size`: Slice size (default: 640, creates 640×640 tiles)
+- `--overlap`: Overlap ratio between slices (default: 0.2, i.e., 20%)
+- `--min-area`: Minimum annotated area ratio relative to slice area (default: 0.1, i.e., 10%)
+- `--ignore-neg`: Add this flag to skip slices without annotations
+
+The sliced dataset will be saved to `rtdetr_pytorch/dataset/Flower_SAHI/` with the same COCO format.
+
+### 3️⃣ Download Pre-trained Models
+
+Pre-trained weights for RT-DETR models are available from the [official repository](https://github.com/lyuwenyu/RT-DETR). Download the model matching your architecture and place it in `rtdetr_pytorch/`:
+
+```bash
+# Example: RT-DETR-R18 pretrained on COCO
+wget https://github.com/lyuwenyu/RT-DETR/releases/download/v0.1/rtdetr_r18_coco.pth -O rtdetr_pytorch/rtdetr_r18_coco.pth
+```
+
+**Available models:** RT-DETR-R18, R34, R50, R101, HGNetv2-L, HGNetv2-X, and variants.
+
+### 4️⃣ Train the Model
+
+Create a configuration file for your dataset (e.g., `rtdetr_pytorch/configs/dataset/your_dataset.yml`) and update model config accordingly, then run:
+
+```bash
+cd rtdetr_pytorch
+
+# Finetune from pretrained weights (recommended)
+python tools/train.py \
+    --config configs/rtdetr/rtdetr_r18vd_6x_coco.yml \
+    --resume rtdetr_r18_coco.pth
+
+# Train from scratch
+python tools/train.py \
+    --config configs/rtdetr/rtdetr_r18vd_6x_coco.yml
+```
+
+Training outputs (checkpoints, logs) are saved to `rtdetr_pytorch/output/`.
+
+### 5️⃣ Evaluate the Model
+
+Evaluate your trained model on the validation/test set:
+
+```bash
+cd rtdetr_pytorch
+
+# Evaluate a checkpoint
+python tools/train.py \
+    --config configs/rtdetr/rtdetr_r18vd_6x_coco.yml \
+    --resume output/rtdetr_r18vd_flower/checkpoint.pth \
+    --eval
+```
+
+This will compute mAP, mAP@50, and other COCO-style metrics on your dataset.
+
+---
+
+## Original RT-DETR README
+
 English | [简体中文](README_cn.md)
 
 
