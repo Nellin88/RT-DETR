@@ -6,6 +6,8 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import os 
 import sys 
+import gc
+import time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 import argparse
 import src.misc.dist as dist 
@@ -116,6 +118,10 @@ def draw(images, labels, boxes, scores, thrh = 0.6, path = ""):
 def main(args, ):
     """main
     """
+    # Normalize device string: 'gpu' -> 'cuda'
+    if args.device.lower() == 'gpu':
+        args.device = 'cuda'
+    
     cfg = YAMLConfig(args.config, resume=args.resume)
     if args.resume:
         checkpoint = torch.load(args.resume, map_location='cpu') 
@@ -127,6 +133,10 @@ def main(args, ):
         raise AttributeError('Only support resume to load model.state_dict by now.')
     # NOTE load train mode state -> convert to deploy mode
     cfg.model.load_state_dict(state)
+    del checkpoint
+    del state
+    gc.collect()
+
     class Model(nn.Module):
         def __init__(self, ) -> None:
             super().__init__()
@@ -139,6 +149,7 @@ def main(args, ):
             return outputs
     
     model = Model().to(args.device)
+    model.eval()
     im_pil = Image.open(args.im_file).convert('RGB')
     w, h = im_pil.size
     orig_size = torch.tensor([w, h])[None].to(args.device)
@@ -148,34 +159,72 @@ def main(args, ):
         T.ToTensor(),
     ])
     im_data = transforms(im_pil)[None].to(args.device)
-    if args.sliced:
-        num_boxes = args.numberofboxes
-        
-        aspect_ratio = w / h
-        num_cols = int(np.sqrt(num_boxes * aspect_ratio)) 
-        num_rows = int(num_boxes / num_cols)
-        slice_height = h // num_rows
-        slice_width = w // num_cols
-        overlap_ratio = 0.2
-        slices, coordinates = slice_image(im_pil, slice_height, slice_width, overlap_ratio)
-        predictions = []
-        for i, slice_img in enumerate(slices):
-            slice_tensor = transforms(slice_img)[None].to(args.device)
-            with autocast():  # Use AMP for each slice
-                output = model(slice_tensor, torch.tensor([[slice_img.size[0], slice_img.size[1]]]).to(args.device))
-            torch.cuda.empty_cache() 
-            labels, boxes, scores = output
+    with torch.inference_mode():
+        if args.sliced:
+            num_boxes = args.numberofboxes
             
-            labels = labels.cpu().detach().numpy()
-            boxes = boxes.cpu().detach().numpy()
-            scores = scores.cpu().detach().numpy()
-            predictions.append((labels, boxes, scores))
-        
-        merged_labels, merged_boxes, merged_scores = merge_predictions(predictions, coordinates, (h, w), slice_width, slice_height)
-        labels, boxes, scores = postprocess(merged_labels, merged_boxes, merged_scores)
-    else:
-        output = model(im_data, orig_size)
-        labels, boxes, scores = output
+            aspect_ratio = w / h
+            num_cols = int(np.sqrt(num_boxes * aspect_ratio)) 
+            num_rows = int(num_boxes / num_cols)
+            slice_height = h // num_rows
+            slice_width = w // num_cols
+            overlap_ratio = 0.2
+            slices, coordinates = slice_image(im_pil, slice_height, slice_width, overlap_ratio)
+            predictions = []
+            forward_total_s = 0.0
+            forward_calls = 0
+            for i, slice_img in enumerate(slices):
+                slice_tensor = transforms(slice_img)[None].to(args.device)
+                t0 = time.perf_counter() if args.benchmark else None
+                with autocast(enabled=args.device.startswith('cuda')):  # Use AMP only on CUDA
+                    output = model(slice_tensor, torch.tensor([[slice_img.size[0], slice_img.size[1]]]).to(args.device))
+                if args.benchmark:
+                    forward_total_s += (time.perf_counter() - t0)
+                    forward_calls += 1
+                if args.device.startswith('cuda'):
+                    torch.cuda.empty_cache() 
+                labels, boxes, scores = output
+                
+                labels = labels.cpu().detach().numpy()
+                boxes = boxes.cpu().detach().numpy()
+                scores = scores.cpu().detach().numpy()
+                predictions.append((labels, boxes, scores))
+            
+            merged_labels, merged_boxes, merged_scores = merge_predictions(predictions, coordinates, (h, w), slice_width, slice_height)
+            labels, boxes, scores = postprocess(merged_labels, merged_boxes, merged_scores)
+            if args.benchmark and forward_calls > 0:
+                print(f"[BENCH] forward-only total: {forward_total_s * 1000:.2f} ms | calls: {forward_calls} | avg per call: {(forward_total_s / forward_calls) * 1000:.2f} ms")
+        else:
+            is_cuda = args.device.startswith('cuda')
+
+            if args.benchmark:
+                # --- Warmup (not timed) ---
+                warmup_iters = 5
+                t_warm = time.perf_counter()
+                for _ in range(warmup_iters):
+                    _ = model(im_data, orig_size)
+                if is_cuda:
+                    torch.cuda.synchronize()
+                warmup_ms = (time.perf_counter() - t_warm) * 1000
+                print(f"[BENCH] warmup: {warmup_ms:.2f} ms total over {warmup_iters} iters "
+                    f"({warmup_ms / warmup_iters:.2f} ms/iter, includes CUDA init)")
+
+                # --- Timed run ---
+                timed_iters = 20
+                if is_cuda:
+                    torch.cuda.synchronize()
+                t0 = time.perf_counter()
+                for _ in range(timed_iters):
+                    output = model(im_data, orig_size)
+                if is_cuda:
+                    torch.cuda.synchronize()
+                elapsed_ms = (time.perf_counter() - t0) * 1000
+                print(f"[BENCH] forward-only avg: {elapsed_ms / timed_iters:.2f} ms "
+                    f"over {timed_iters} iters (total {elapsed_ms:.2f} ms)")
+            else:
+                output = model(im_data, orig_size)
+
+    labels, boxes, scores = output
         
     draw([im_pil], labels, boxes, scores, 0.6)
   
@@ -188,6 +237,7 @@ if __name__ == '__main__':
     parser.add_argument('-s', '--sliced', type=bool, default=False)
     parser.add_argument('-d', '--device', type=str, default='cpu')
     parser.add_argument('-nc', '--numberofboxes', type=int, default=25)
+    parser.add_argument('--benchmark', action='store_true', help='Measure forward-only inference time (ms), excluding setup and drawing')
     args = parser.parse_args()
     main(args)
 
