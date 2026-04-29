@@ -1,0 +1,52 @@
+task: detection
+
+num_classes: 1
+remap_mscoco_category: False
+
+train_dataloader:
+  type: DataLoader
+  dataset:
+    type: CocoDetection
+    img_folder: ./dataset/Flower/images/train/
+    ann_file: ./dataset/Flower/annotations/train.json
+    transforms:
+      type: Compose
+      ops: ~
+  shuffle: True
+  batch_size: 8
+  num_workers: 4
+  drop_last: True
+
+
+val_dataloader:
+  type: DataLoader
+  dataset:
+    type: CocoDetection
+    img_folder: ./dataset/Flower/images/val/
+    ann_file: ./dataset/Flower/annotations/val.json
+    transforms:
+      type: Compose
+      ops: ~
+  shuffle: False
+  batch_size: 8
+  num_workers: 4
+  drop_last: False
+
+
+test_dataloader:
+  type: DataLoader
+  dataset:
+    type: CocoDetection
+    img_folder: ./dataset/Flower/images/test/
+    ann_file: ./dataset/Flower/annotations/test.json
+    transforms:
+      type: Compose
+      ops:
+        - {type: Resize, size: [640, 640]}
+        - {type: ToImageTensor}
+        - {type: ConvertDtype}
+  shuffle: False
+  batch_size: 8
+  num_workers: 4
+  drop_last: False
+  collate_fn: default_collate_fn
