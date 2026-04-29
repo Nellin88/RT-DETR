@@ -1,7 +1,12 @@
+# data files
 code*
-dataset*
+rtdetr_pytorch/dataset*
+*.tar.gz
+
+# user's own notes
 token
 command.txt
+results*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
